@@ -1,4 +1,4 @@
-## Go-Loki-Logger
+## Go-Vector-Logger
 
 An easy way to use Loki for logs in Go.
 
