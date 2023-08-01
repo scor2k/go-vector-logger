@@ -14,7 +14,6 @@ type VectorLogger struct {
 	Level       string
 	VectorHost  string
 	VectorPort  int64
-	Instance    string
 }
 
 type Message struct {
@@ -22,7 +21,6 @@ type Message struct {
 	Application string `json:"application"`
 	Level       string `json:"level"`
 	Message     string `json:"message"`
-	Instance    string `json:"instance"`
 }
 
 func (l *VectorLogger) Init(application string, level string, vectorHost string, vectorPort int64, instance string) {
@@ -30,7 +28,6 @@ func (l *VectorLogger) Init(application string, level string, vectorHost string,
 	l.Level = level
 	l.VectorHost = vectorHost
 	l.VectorPort = vectorPort
-	l.Instance = instance
 }
 
 func (l *VectorLogger) Info(message string) {
@@ -42,7 +39,6 @@ func (l *VectorLogger) Info(message string) {
 		Application: l.Application,
 		Level:       "INFO",
 		Message:     message,
-		Instance:    l.Instance,
 	}
 	l.send(&newMessage)
 }
@@ -57,7 +53,6 @@ func (l *VectorLogger) Debug(message string) {
 		Application: l.Application,
 		Level:       "DEBUG",
 		Message:     message,
-		Instance:    l.Instance,
 	}
 	l.send(&newMessage)
 }
@@ -68,7 +63,6 @@ func (l *VectorLogger) Error(message string) {
 		Application: l.Application,
 		Level:       "ERROR",
 		Message:     message,
-		Instance:    l.Instance,
 	}
 	l.send(&newMessage)
 }
