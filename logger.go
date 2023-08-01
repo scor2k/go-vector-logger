@@ -1,3 +1,4 @@
+// Package go_vector_logger provides a logger that can write logs to stdout and send them to a remote Vector instance.
 package go_vector_logger
 
 import (
@@ -9,20 +10,23 @@ import (
 	"time"
 )
 
+// VectorLogger represents a logger instance.
 type VectorLogger struct {
-	Application string
-	Level       string
-	VectorHost  string
-	VectorPort  int64
+	Application string // Application name.
+	Level       string // Log level.
+	VectorHost  string // Vector host.
+	VectorPort  int64  // Vector port.
 }
 
+// Message represents a log message.
 type Message struct {
-	Timestamp   string `json:"timestamp"`
-	Application string `json:"application"`
-	Level       string `json:"level"`
-	Message     string `json:"message"`
+	Timestamp   string `json:"timestamp"`   // Log timestamp.
+	Application string `json:"application"` // Application name.
+	Level       string `json:"level"`       // Log level.
+	Message     string `json:"message"`     // Log message.
 }
 
+// Init initializes the logger instance.
 func (l *VectorLogger) Init(application string, level string, vectorHost string, vectorPort int64) {
 	l.Application = application
 	l.Level = level
@@ -30,6 +34,21 @@ func (l *VectorLogger) Init(application string, level string, vectorHost string,
 	l.VectorPort = vectorPort
 }
 
+// Infof logs an info message with a formatted string.
+func (l *VectorLogger) Infof(format string, v ...interface{}) {
+	if strings.ToUpper(l.Level) == "ERROR" {
+		return
+	}
+	newMessage := Message{
+		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
+		Application: l.Application,
+		Level:       "INFO",
+		Message:     fmt.Sprintf(format, v...),
+	}
+	l.send(&newMessage)
+}
+
+// Info logs an info message.
 func (l *VectorLogger) Info(message string) {
 	if strings.ToUpper(l.Level) == "ERROR" {
 		return
@@ -43,6 +62,22 @@ func (l *VectorLogger) Info(message string) {
 	l.send(&newMessage)
 }
 
+// Debugf logs a debug message with a formatted string.
+func (l *VectorLogger) Debugf(format string, v ...interface{}) {
+	if (strings.ToUpper(l.Level) == "ERROR") || (strings.ToUpper(l.Level) == "INFO") {
+		return
+	}
+
+	newMessage := Message{
+		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
+		Application: l.Application,
+		Level:       "DEBUG",
+		Message:     fmt.Sprintf(format, v...),
+	}
+	l.send(&newMessage)
+}
+
+// Debug logs a debug message.
 func (l *VectorLogger) Debug(message string) {
 	if (strings.ToUpper(l.Level) == "ERROR") || (strings.ToUpper(l.Level) == "INFO") {
 		return
@@ -57,6 +92,18 @@ func (l *VectorLogger) Debug(message string) {
 	l.send(&newMessage)
 }
 
+// Errorf logs an error message with a formatted string.
+func (l *VectorLogger) Errorf(format string, v ...interface{}) {
+	newMessage := Message{
+		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
+		Application: l.Application,
+		Level:       "ERROR",
+		Message:     fmt.Sprintf(format, v...),
+	}
+	l.send(&newMessage)
+}
+
+// Error logs an error message.
 func (l *VectorLogger) Error(message string) {
 	newMessage := Message{
 		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
@@ -67,7 +114,7 @@ func (l *VectorLogger) Error(message string) {
 	l.send(&newMessage)
 }
 
-// Send - send logs to the tcp host + port
+// send sends the log message to stdout and to a remote Vector instance.
 func (l *VectorLogger) send(msg *Message) {
 	// Write logs to the stdout with different (human-readable) format
 	_, _ = fmt.Fprintf(os.Stdout, "%23s | %5s | %s\n", msg.Timestamp, msg.Level, msg.Message)
