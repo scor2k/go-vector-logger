@@ -23,7 +23,7 @@ type Message struct {
 	Message     string `json:"message"`
 }
 
-func (l *VectorLogger) Init(application string, level string, vectorHost string, vectorPort int64, instance string) {
+func (l *VectorLogger) Init(application string, level string, vectorHost string, vectorPort int64) {
 	l.Application = application
 	l.Level = level
 	l.VectorHost = vectorHost
