@@ -1,6 +1,6 @@
 ## Go-Vector-Logger
 
-An easy way to use Loki for logs in Go.
+An easy way to use [Vector](https://vector.dev) for logs in Go.
 
 ### Usage
 
