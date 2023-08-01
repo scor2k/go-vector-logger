@@ -14,8 +14,7 @@ import (
 var logger VectorLogger
 
 func main() {
-  hostname, _ := os.Hostname()
-  logger.Init("test-app", "info", "127.0.0.1", 10100, hostname)
+  logger.Init("test-app", "info", "127.0.0.1", 10100)
 
   logger.Debug("test debug message")
   logger.Info("test info message")
