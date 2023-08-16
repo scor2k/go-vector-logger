@@ -18,6 +18,8 @@ func main() {
 
   logger.Debug("test debug message")
   logger.Info("test info message")
+  logger.Warn("test warning message")
   logger.Error("test error message")
+  logger.Errorf("test error message with %s", "formatting")
 }
 ```
