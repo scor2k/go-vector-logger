@@ -34,84 +34,62 @@ func (l *VectorLogger) Init(application string, level string, vectorHost string,
 	l.VectorPort = vectorPort
 }
 
-// Infof logs an info message with a formatted string.
-func (l *VectorLogger) Infof(format string, v ...interface{}) {
-	if strings.ToUpper(l.Level) == "ERROR" {
-		return
-	}
-	newMessage := Message{
-		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
-		Application: l.Application,
-		Level:       "INFO",
-		Message:     fmt.Sprintf(format, v...),
-	}
-	l.send(&newMessage)
-}
-
-// Info logs an info message.
-func (l *VectorLogger) Info(message string) {
-	if strings.ToUpper(l.Level) == "ERROR" {
-		return
-	}
-	newMessage := Message{
-		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
-		Application: l.Application,
-		Level:       "INFO",
-		Message:     message,
-	}
-	l.send(&newMessage)
-}
-
 // Debugf logs a debug message with a formatted string.
 func (l *VectorLogger) Debugf(format string, v ...interface{}) {
-	if (strings.ToUpper(l.Level) == "ERROR") || (strings.ToUpper(l.Level) == "INFO") {
+	if strings.ToUpper(l.Level) != "DEBUG" {
 		return
 	}
-
-	newMessage := Message{
-		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
-		Application: l.Application,
-		Level:       "DEBUG",
-		Message:     fmt.Sprintf(format, v...),
-	}
-	l.send(&newMessage)
+	l.sendMessage(fmt.Sprintf(format, v...), "DEBUG")
 }
 
 // Debug logs a debug message.
 func (l *VectorLogger) Debug(message string) {
-	if (strings.ToUpper(l.Level) == "ERROR") || (strings.ToUpper(l.Level) == "INFO") {
+	if strings.ToUpper(l.Level) != "DEBUG" {
 		return
 	}
+	l.sendMessage(message, "DEBUG")
+}
 
-	newMessage := Message{
-		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
-		Application: l.Application,
-		Level:       "DEBUG",
-		Message:     message,
+// Infof logs an info message with a formatted string.
+func (l *VectorLogger) Infof(format string, v ...interface{}) {
+	if (strings.ToUpper(l.Level) == "ERROR") || (strings.ToUpper(l.Level) == "WARN") {
+		return
 	}
-	l.send(&newMessage)
+	l.sendMessage(fmt.Sprintf(format, v...), "INFO")
+}
+
+// Info logs an info message.
+func (l *VectorLogger) Info(message string) {
+	if (strings.ToUpper(l.Level) == "ERROR") || (strings.ToUpper(l.Level) == "WARN") {
+		return
+	}
+	l.sendMessage(message, "INFO")
+}
+
+// Warnf logs an warning message with a formatted string.
+func (l *VectorLogger) Warnf(format string, v ...interface{}) {
+	if strings.ToUpper(l.Level) == "ERROR" {
+		return
+	}
+	l.sendMessage(fmt.Sprintf(format, v...), "WARN")
+}
+
+// Warn logs an warning message.
+func (l *VectorLogger) Warn(message string) {
+	if strings.ToUpper(l.Level) == "ERROR" {
+		return
+	}
+	l.sendMessage(message, "WARN")
 }
 
 // Errorf logs an error message with a formatted string.
 func (l *VectorLogger) Errorf(format string, v ...interface{}) {
-	newMessage := Message{
-		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
-		Application: l.Application,
-		Level:       "ERROR",
-		Message:     fmt.Sprintf(format, v...),
-	}
-	l.send(&newMessage)
+	l.sendMessage(fmt.Sprintf(format, v...), "ERROR")
 }
 
 // Error logs an error message.
 func (l *VectorLogger) Error(message string) {
-	newMessage := Message{
-		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
-		Application: l.Application,
-		Level:       "ERROR",
-		Message:     message,
-	}
-	l.send(&newMessage)
+	l.sendMessage(message, "ERROR")
 }
 
 // send sends the log message to stdout and to a remote Vector instance.
@@ -126,25 +104,36 @@ func (l *VectorLogger) send(msg *Message) {
 	// Send logs to the vector if the host is set
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort))
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send logs to vector on: %s:%d", l.VectorHost, l.VectorPort)
+		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send logs to vector on: %s:%d\n", l.VectorHost, l.VectorPort)
 		return
 	}
 	defer func(conn net.Conn) {
 		err := conn.Close()
 		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot close the connection to vector on: %s:%d", l.VectorHost, l.VectorPort)
+			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot close the connection to vector on: %s:%d\n", l.VectorHost, l.VectorPort)
 		}
 	}(conn)
 
 	// Convert the JSON object to bytes
 	logBytes, errMarshal := json.Marshal(msg)
 	if errMarshal != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot marshal log msg: %v", errMarshal)
+		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot marshal log msg: %v\n", errMarshal)
 		return
 	}
 	// Send the log bytes to the TCP socket
 	_, errSend := conn.Write(logBytes)
 	if errSend != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to vector: %v", errSend)
+		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to vector: %v\n", errSend)
 	}
+}
+
+// wrapper for sending a log message
+func (l *VectorLogger) sendMessage(message string, level string) {
+	newMessage := Message{
+		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.99Z"),
+		Application: l.Application,
+		Level:       strings.ToUpper(level),
+		Message:     message,
+	}
+	l.send(&newMessage)
 }
