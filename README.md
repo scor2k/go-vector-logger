@@ -11,15 +11,34 @@ import (
   "github.com/scor2k/go-vector-logger"
 )
 
-var logger VectorLogger
+var log VectorLogger
 
 func main() {
-  logger.Init("test-app", "info", "127.0.0.1", 10100)
+  log := go_vector_logger.New("test-app", "INFO", "127.0.0.1", 10100)
 
-  logger.Debug("test debug message")
-  logger.Info("test info message")
-  logger.Warn("test warning message")
-  logger.Error("test error message")
-  logger.Errorf("test error message with %s", "formatting")
+  log.Debug("test debug message")
+  log.Info("test info message")
+  log.Warn("test warning message")
+  log.Error("test error message")
+  log.Errorf("test error message with %s", "formatting")
 }
 ```
+
+Also, you can pass in aditional options to `New()`:
+
+```
+type Options struct {
+  Writer            io.Writer // Instead of over the network, write the log messages just to this writer
+  AlsoPrintMessages bool      // In addition to the specific network/writer, also log any messages to stdout
+}
+
+[...]
+log := go_vector_logger.New(
+  "test-app",
+  "INFO",
+  "127.0.0.1",
+  10100,
+  Options{
+    AlsoPrintMessages: true,
+  },
+)
