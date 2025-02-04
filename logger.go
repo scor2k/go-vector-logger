@@ -142,6 +142,12 @@ func (l *VectorLogger) Fatal(message string) {
 	os.Exit(1)
 }
 
+// Fatal logs an error message.
+func (l *VectorLogger) FatalError(message error) {
+	l.sendMessage(message.Error(), FATAL)
+	os.Exit(1)
+}
+
 // send sends the log message to stdout and to a remote Vector instance.
 func (l *VectorLogger) send(msg *Message) {
 	// Write logs to the stdout with different (human-readable) format

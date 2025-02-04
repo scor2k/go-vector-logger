@@ -21,6 +21,9 @@ func main() {
   log.Warn("test warning message")
   log.Error("test error message")
   log.Errorf("test error message with %s", "formatting")
+  log.Fatal("test error message")
+  log.Fatalf("test error message with %s", "formatting")
+  log.FatalError(err)
 }
 ```
 
