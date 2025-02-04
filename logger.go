@@ -17,6 +17,7 @@ const (
 	INFO         = "INFO"
 	WARN         = "WARN"
 	ERROR        = "ERROR"
+	FATAL        = "FATAL"
 )
 
 // Options list different options you can optionally pass into New
@@ -127,6 +128,24 @@ func (l *VectorLogger) Errorf(format string, v ...interface{}) {
 // Error logs an error message.
 func (l *VectorLogger) Error(message string) {
 	l.sendMessage(message, ERROR)
+}
+
+// Errorf logs an error message with a formatted string.
+func (l *VectorLogger) Fatalf(format string, v ...interface{}) {
+	l.sendMessage(fmt.Sprintf(format, v...), FATAL)
+	os.Exit(1)
+}
+
+// Fatal logs an error message.
+func (l *VectorLogger) Fatal(message string) {
+	l.sendMessage(message, FATAL)
+	os.Exit(1)
+}
+
+// Fatal logs an error message.
+func (l *VectorLogger) FatalError(message error) {
+	l.sendMessage(message.Error(), FATAL)
+	os.Exit(1)
 }
 
 // send sends the log message to stdout and to a remote Vector instance.
