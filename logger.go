@@ -22,8 +22,9 @@ const (
 
 // Options list different options you can optionally pass into New
 type Options struct {
-	Writer            io.Writer // Instead of over the network, write the log messages just to this writer
-	AlsoPrintMessages bool      // In addition to the specific network, also log any messages to stdout
+	Writer            io.Writer     // Instead of over the network, write the log messages just to this writer
+	AlsoPrintMessages bool          // In addition to the specific network, also log any messages to stdout
+	TCPTimeout        time.Duration // Timeout for TCP connection and write. If zero, defaults to 1 second.
 }
 
 // VectorLogger represents a logger instance.
@@ -162,8 +163,14 @@ func (l *VectorLogger) send(msg *Message) {
 			return
 		}
 
+		// Determine timeout (default 1 second if not set)
+		timeout := l.Options.TCPTimeout
+		if timeout == 0 {
+			timeout = 1 * time.Second
+		}
+
 		// Send logs to the vector if the host is set
-		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort))
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort), timeout)
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send logs to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
 			return
@@ -174,6 +181,7 @@ func (l *VectorLogger) send(msg *Message) {
 				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot close the connection to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
 			}
 		}(conn)
+		conn.SetWriteDeadline(time.Now().Add(timeout))
 		dest = conn
 	}
 
