@@ -2,6 +2,8 @@
 
 An easy way to use [Vector](https://vector.dev) for logs in Go.
 
+See [Changelog.md](./Changelog.md) for release history.
+
 ### Usage
 
 ```go
@@ -11,10 +13,11 @@ import (
   "github.com/scor2k/go-vector-logger"
 )
 
-var log VectorLogger
-
 func main() {
-  log := go_vector_logger.New("test-app", "INFO", "127.0.0.1", 10100)
+  log, err := go_vector_logger.New("test-app", "INFO", "127.0.0.1", 10100)
+  if err != nil {
+    panic(err)
+  }
 
   log.Debug("test debug message")
   log.Info("test info message")
@@ -27,21 +30,31 @@ func main() {
 }
 ```
 
-Also, you can pass in aditional options to `New()`:
+#### Options
 
-```
+You can pass additional options to `New()`:
+
+```go
 type Options struct {
-  Writer            io.Writer // Instead of over the network, write the log messages just to this writer
-  AlsoPrintMessages bool      // In addition to the specific network/writer, also log any messages to stdout
+  Writer            io.Writer     // Instead of over the network, write the log messages just to this writer
+  AlsoPrintMessages bool          // In addition to the specific network/writer, also log any messages to stdout
+  TCPTimeout        time.Duration // Timeout for TCP connection and write. If zero, defaults to 1 second.
 }
+```
 
-[...]
-log := go_vector_logger.New(
+Example with options:
+
+```go
+log, err := go_vector_logger.New(
   "test-app",
   "INFO",
   "127.0.0.1",
   10100,
-  Options{
+  go_vector_logger.Options{
     AlsoPrintMessages: true,
   },
 )
+if err != nil {
+  panic(err)
+}
+```
