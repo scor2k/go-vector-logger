@@ -72,16 +72,6 @@ type Message struct {
 	Message     string `json:"message"`     // Log message.
 }
 
-// Init initializes the logger instance. This method is deprecated; use
-// New() with a Options struct for more flexibility.
-func (l *VectorLogger) Init(application string, level string, vectorHost string, vectorPort int64) {
-	l.Application = application
-	l.Level = strings.ToUpper(level)
-	l.VectorHost = vectorHost
-	l.VectorPort = vectorPort
-	l.Options.AlsoPrintMessages = true
-}
-
 // Debugf logs a debug message with a formatted string.
 func (l *VectorLogger) Debugf(format string, v ...interface{}) {
 	if l.Level != DEBUG {
