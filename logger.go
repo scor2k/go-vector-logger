@@ -36,6 +36,15 @@ type VectorLogger struct {
 	conn        net.Conn // Persistent TCP connection
 }
 
+// establishConnection creates a TCP connection to the Vector instance.
+func establishConnection(host string, port int64) (net.Conn, error) {
+	conn, err := net.Dial("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", port)))
+	if err != nil {
+		return nil, fmt.Errorf("cannot establish connection to the TCP endpoint on: %s:%d: %v", host, port, err)
+	}
+	return conn, nil
+}
+
 func New(application string, level string, vectorHost string, vectorPort int64, options ...Options) (*VectorLogger, error) {
 	var opts Options
 	switch len(options) {
@@ -56,9 +65,9 @@ func New(application string, level string, vectorHost string, vectorPort int64, 
 
 	// Establish persistent TCP connection if needed
 	if opts.Writer == nil && vectorHost != "" {
-		conn, err := net.Dial("tcp", net.JoinHostPort(vectorHost, fmt.Sprintf("%d", vectorPort)))
+		conn, err := establishConnection(vectorHost, vectorPort)
 		if err != nil {
-			return nil, fmt.Errorf("cannot establish connection to the TCP endpoint on: %s:%d: %v", vectorHost, vectorPort, err)
+			return nil, err
 		}
 		logger.conn = conn
 	}
@@ -176,8 +185,13 @@ func (l *VectorLogger) send(msg *Message) {
 
 		// Use persistent connection
 		if l.conn == nil {
-			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] TCP connection is not established\n")
-			return
+			// Try to establish connection if it doesn't exist
+			conn, err := establishConnection(l.VectorHost, l.VectorPort)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
+				return
+			}
+			l.conn = conn
 		}
 
 		dest = l.conn
@@ -192,11 +206,22 @@ func (l *VectorLogger) send(msg *Message) {
 
 	// Send the log bytes to the TCP socket
 	if _, errSend := buf.WriteTo(dest); errSend != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to the TCP endpoint: %v\n", errSend)
+		// let's try to reconnect and send again
+		conn, err := establishConnection(l.VectorHost, l.VectorPort)
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot establish connection: %v\n", err)
+			return
+		}
+
+		l.conn = conn
+		if _, errSendAgain := buf.WriteTo(l.conn); errSendAgain != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to the TCP endpoint: %v\n", errSendAgain)
+		}
 	}
 }
 
 func (l *VectorLogger) Close() error {
+	l.Options.Writer = nil
 	if l.conn != nil {
 		return l.conn.Close()
 	}
