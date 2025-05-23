@@ -165,13 +165,13 @@ func (l *VectorLogger) send(msg *Message) {
 		// Send logs to the vector if the host is set
 		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort))
 		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send logs to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
+			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot establish connection to the TCP endpoint on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
 			return
 		}
 		defer func(conn net.Conn) {
 			err := conn.Close()
 			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot close the connection to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
+				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot close the connection to the TCP endpoint on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
 			}
 		}(conn)
 		dest = conn
@@ -186,7 +186,7 @@ func (l *VectorLogger) send(msg *Message) {
 
 	// Send the log bytes to the TCP socket
 	if _, errSend := buf.WriteTo(dest); errSend != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to vector: %v\n", errSend)
+		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to the TCP endpoint: %v\n", errSend)
 	}
 }
 
