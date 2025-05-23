@@ -21,7 +21,8 @@ func main() {
 	log.Warn("test warning message")
 	log.Error("test error message")
 	log.Errorf("test error message with %s", "formatting")
-	log.Fatal("test error message")
-	log.Fatalf("test error message with %s", "formatting")
+	log.Fatalf("test fatal message with %s", "formatting")
+	log.Fatal("test fatal message")
 	log.FatalError(err)
+	_ = log.Close() // won't be called because of the log.Fatal()
 }

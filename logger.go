@@ -28,11 +28,12 @@ type Options struct {
 
 // VectorLogger represents a logger instance.
 type VectorLogger struct {
-	Application string // Application name.
-	Level       string // Log level.
-	VectorHost  string // Vector host.
-	VectorPort  int64  // Vector port.
-	Options     Options
+	Application string   // Application name.
+	Level       string   // Log level.
+	VectorHost  string   // Vector host.
+	VectorPort  int64    // Vector port.
+	Options     Options  // Options for the logger
+	conn        net.Conn // Persistent TCP connection
 }
 
 func New(application string, level string, vectorHost string, vectorPort int64, options ...Options) (*VectorLogger, error) {
@@ -45,13 +46,24 @@ func New(application string, level string, vectorHost string, vectorPort int64, 
 		return nil, fmt.Errorf("Can only pass in one Options struct")
 	}
 
-	return &VectorLogger{
+	logger := &VectorLogger{
 		Application: application,
 		Level:       strings.ToUpper(level),
 		VectorHost:  vectorHost,
 		VectorPort:  vectorPort,
 		Options:     opts,
-	}, nil
+	}
+
+	// Establish persistent TCP connection if needed
+	if opts.Writer == nil && vectorHost != "" {
+		conn, err := net.Dial("tcp", net.JoinHostPort(vectorHost, fmt.Sprintf("%d", vectorPort)))
+		if err != nil {
+			return nil, fmt.Errorf("cannot establish connection to the TCP endpoint on: %s:%d: %v", vectorHost, vectorPort, err)
+		}
+		logger.conn = conn
+	}
+
+	return logger, nil
 }
 
 // Message represents a log message.
@@ -162,19 +174,13 @@ func (l *VectorLogger) send(msg *Message) {
 			return
 		}
 
-		// Send logs to the vector if the host is set
-		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort))
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot establish connection to the TCP endpoint on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
+		// Use persistent connection
+		if l.conn == nil {
+			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] TCP connection is not established\n")
 			return
 		}
-		defer func(conn net.Conn) {
-			err := conn.Close()
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot close the connection to the TCP endpoint on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
-			}
-		}(conn)
-		dest = conn
+
+		dest = l.conn
 	}
 
 	// Convert the JSON object to bytes
@@ -188,6 +194,13 @@ func (l *VectorLogger) send(msg *Message) {
 	if _, errSend := buf.WriteTo(dest); errSend != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to the TCP endpoint: %v\n", errSend)
 	}
+}
+
+func (l *VectorLogger) Close() error {
+	if l.conn != nil {
+		return l.conn.Close()
+	}
+	return nil
 }
 
 // wrapper for sending a log message
