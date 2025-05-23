@@ -58,3 +58,28 @@ if err != nil {
   panic(err)
 }
 ```
+
+### Local testing
+
+If you want to test or use this package locally before merging, follow these steps:
+
+1. **Clone the repository** (if you haven't already):
+
+   ```sh
+   git clone https://github.com/scor2k/go-vector-logger.git
+   cd go-vector-logger
+   ```
+
+2. **Start Vector with TCP logger**
+
+  ```sh
+  ./run-vector.sh
+  ```
+
+3. **Run your example or tests from the repo root**
+   For example:
+   ```sh
+   go run ./example/basic_usage.go
+   ```
+
+Check that the logs are being sent to Vector and displayed in the console.
