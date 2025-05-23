@@ -7,7 +7,9 @@ import (
 
 func main() {
 
-	log, err := go_vector_logger.New("test-app", "INFO", "127.0.0.1", 6000)
+	log, err := go_vector_logger.New("test-app", "INFO", "127.0.0.1", 6000, go_vector_logger.Options{
+		AlsoPrintMessages: true,
+	})
 	if err != nil {
 		panic(err)
 	}

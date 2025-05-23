@@ -22,9 +22,8 @@ const (
 
 // Options list different options you can optionally pass into New
 type Options struct {
-	Writer            io.Writer     // Instead of over the network, write the log messages just to this writer
-	AlsoPrintMessages bool          // In addition to the specific network, also log any messages to stdout
-	TCPTimeout        time.Duration // Timeout for TCP connection and write. If zero, defaults to 1 second.
+	Writer            io.Writer // Instead of over the network, write the log messages just to this writer
+	AlsoPrintMessages bool      // In addition to the specific network, also log any messages to stdout
 }
 
 // VectorLogger represents a logger instance.
@@ -34,11 +33,6 @@ type VectorLogger struct {
 	VectorHost  string // Vector host.
 	VectorPort  int64  // Vector port.
 	Options     Options
-
-	logChan  chan *Message
-	done     chan struct{}
-	conn     net.Conn
-	lastUsed time.Time
 }
 
 func New(application string, level string, vectorHost string, vectorPort int64, options ...Options) (*VectorLogger, error) {
@@ -51,17 +45,13 @@ func New(application string, level string, vectorHost string, vectorPort int64, 
 		return nil, fmt.Errorf("Can only pass in one Options struct")
 	}
 
-	logger := &VectorLogger{
+	return &VectorLogger{
 		Application: application,
 		Level:       strings.ToUpper(level),
 		VectorHost:  vectorHost,
 		VectorPort:  vectorPort,
 		Options:     opts,
-		logChan:     make(chan *Message, 1000),
-		done:        make(chan struct{}),
-	}
-	go logger.backgroundSender()
-	return logger, nil
+	}, nil
 }
 
 // Message represents a log message.
@@ -70,6 +60,16 @@ type Message struct {
 	Application string `json:"application"` // Application name.
 	Level       string `json:"level"`       // Log level.
 	Message     string `json:"message"`     // Log message.
+}
+
+// Init initializes the logger instance. This method is deprecated; use
+// New() with a Options struct for more flexibility.
+func (l *VectorLogger) Init(application string, level string, vectorHost string, vectorPort int64) {
+	l.Application = application
+	l.Level = strings.ToUpper(level)
+	l.VectorHost = vectorHost
+	l.VectorPort = vectorPort
+	l.Options.AlsoPrintMessages = true
 }
 
 // Debugf logs a debug message with a formatted string.
@@ -148,146 +148,55 @@ func (l *VectorLogger) FatalError(message error) {
 	os.Exit(1)
 }
 
-// backgroundSender runs in a goroutine and sends log messages from the channel using a persistent TCP connection.
-// The connection is kept open for up to 30 seconds of inactivity, then closed.
-func (l *VectorLogger) backgroundSender() {
-	const idleTimeout = 30 * time.Second
-	var idleTimer = time.NewTimer(idleTimeout)
-	defer idleTimer.Stop()
+// send sends the log message to stdout and to a remote Vector instance.
+func (l *VectorLogger) send(msg *Message) {
+	// Write logs to the stdout with different (human-readable) format
+	if l.Options.AlsoPrintMessages {
+		_, _ = fmt.Fprintf(os.Stdout, "%23s | %5s | %s\n", msg.Timestamp, msg.Level, msg.Message)
+	}
 
-	for {
-		select {
-		case msg := <-l.logChan:
-			// Write logs to the stdout with different (human-readable) format
-			if l.Options.AlsoPrintMessages {
-				_, _ = fmt.Fprintf(os.Stdout, "%23s | %5s | %s\n", msg.Timestamp, msg.Level, msg.Message)
-			}
-
-			dest := l.Options.Writer
-			if dest == nil {
-				// Setup network connection if the host is set
-				if l.VectorHost == "" {
-					continue
-				}
-
-				// Determine timeout (default 1 second if not set)
-				timeout := l.Options.TCPTimeout
-				if timeout == 0 {
-					timeout = 1 * time.Second
-				}
-
-				// Open persistent connection if not open
-				if l.conn == nil {
-					conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort), timeout)
-					if err != nil {
-						_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send logs to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
-						continue
-					}
-					l.conn = conn
-				}
-				l.conn.SetWriteDeadline(time.Now().Add(timeout))
-				dest = l.conn
-			}
-
-			// Convert the JSON object to bytes
-			buf := new(bytes.Buffer)
-			if errMarshal := json.NewEncoder(buf).Encode(msg); errMarshal != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot marshal log msg: %v\n", errMarshal)
-				continue
-			}
-
-			// Send the log bytes to the TCP socket
-			if _, errSend := buf.WriteTo(dest); errSend != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to vector: %v\n", errSend)
-				// On error, close persistent connection so it will reconnect next time
-				if l.conn != nil {
-					l.conn.Close()
-					l.conn = nil
-				}
-			} else {
-				l.lastUsed = time.Now()
-			}
-
-			// Reset idle timer after each message
-			if !idleTimer.Stop() {
-				<-idleTimer.C
-			}
-			idleTimer.Reset(idleTimeout)
-
-		case <-idleTimer.C:
-			// Close connection after 30s of inactivity
-			if l.conn != nil {
-				l.conn.Close()
-				l.conn = nil
-			}
-			idleTimer.Reset(idleTimeout)
-
-		case <-l.done:
-			// Drain remaining messages before exit
-			for {
-				select {
-				case msg := <-l.logChan:
-					// Write logs to the stdout with different (human-readable) format
-					if l.Options.AlsoPrintMessages {
-						_, _ = fmt.Fprintf(os.Stdout, "%23s | %5s | %s\n", msg.Timestamp, msg.Level, msg.Message)
-					}
-
-					dest := l.Options.Writer
-					if dest == nil {
-						if l.VectorHost == "" {
-							continue
-						}
-						timeout := l.Options.TCPTimeout
-						if timeout == 0 {
-							timeout = 2 * time.Second
-						}
-						if l.conn == nil {
-							conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort), timeout)
-							if err != nil {
-								_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send logs to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
-								continue
-							}
-							l.conn = conn
-						}
-						l.conn.SetWriteDeadline(time.Now().Add(timeout))
-						dest = l.conn
-					}
-					buf := new(bytes.Buffer)
-					if errMarshal := json.NewEncoder(buf).Encode(msg); errMarshal != nil {
-						_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot marshal log msg: %v\n", errMarshal)
-						continue
-					}
-					if _, errSend := buf.WriteTo(dest); errSend != nil {
-						_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to vector: %v\n", errSend)
-						if l.conn != nil {
-							l.conn.Close()
-							l.conn = nil
-						}
-					}
-				default:
-					if l.conn != nil {
-						l.conn.Close()
-						l.conn = nil
-					}
-					return
-				}
-			}
+	dest := l.Options.Writer
+	if dest == nil {
+		// Setup network connection if the host is set
+		if l.VectorHost == "" {
+			return
 		}
+
+		// Send logs to the vector if the host is set
+		conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", l.VectorHost, l.VectorPort))
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send logs to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
+			return
+		}
+		defer func(conn net.Conn) {
+			err := conn.Close()
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot close the connection to vector on: %s:%d: %v\n", l.VectorHost, l.VectorPort, err)
+			}
+		}(conn)
+		dest = conn
+	}
+
+	// Convert the JSON object to bytes
+	buf := new(bytes.Buffer)
+	if errMarshal := json.NewEncoder(buf).Encode(msg); errMarshal != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot marshal log msg: %v\n", errMarshal)
+		return
+	}
+
+	// Send the log bytes to the TCP socket
+	if _, errSend := buf.WriteTo(dest); errSend != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to vector: %v\n", errSend)
 	}
 }
 
 // wrapper for sending a log message
 func (l *VectorLogger) sendMessage(message string, level string) {
-	newMessage := &Message{
+	newMessage := Message{
 		Timestamp:   time.Now().UTC().Format("2006-01-02T15:04:05.00Z"),
 		Application: l.Application,
 		Level:       level,
 		Message:     message,
 	}
-	// Non-blocking send, drop if channel is full
-	select {
-	case l.logChan <- newMessage:
-	default:
-		// Optionally, you could count dropped messages here
-	}
+	l.send(&newMessage)
 }
