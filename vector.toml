@@ -1,0 +1,20 @@
+# Vector configuration for local testing
+# Receives logs over TCP and prints them to the console
+
+[sources.tcp_in]
+type = "socket"
+address = "0.0.0.0:6000"
+mode = "tcp"
+max_length = 102400
+
+[transforms.parse_json]
+type = "remap"
+inputs = ["tcp_in"]
+source = '''
+. = parse_json!(.message)
+'''
+
+[sinks.console_out]
+type = "console"
+inputs = ["parse_json"]
+encoding.codec = "json"
