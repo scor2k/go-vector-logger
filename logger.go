@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,12 +29,17 @@ type Options struct {
 
 // VectorLogger represents a logger instance.
 type VectorLogger struct {
-	Application string   // Application name.
-	Level       string   // Log level.
-	VectorHost  string   // Vector host.
-	VectorPort  int64    // Vector port.
-	Options     Options  // Options for the logger
-	conn        net.Conn // Persistent TCP connection
+	Application      string         // Application name.
+	Level            string         // Log level.
+	VectorHost       string         // Vector host.
+	VectorPort       int64          // Vector port.
+	Options          Options        // Options for the logger
+	conn             net.Conn       // Persistent TCP connection
+	lastActivityTime time.Time      // Timestamp of the last communication.
+	TimeoutDuration  time.Duration  // Duration after which an inactive connection should be considered timed out.
+	mu               sync.Mutex     // For ensuring thread-safe access to conn and lastActivityTime.
+	stopChan         chan struct{}  // Channel to signal the connection management goroutine to stop.
+	wg               sync.WaitGroup // For waiting for the connection management goroutine to exit.
 }
 
 // establishConnection creates a TCP connection to the Vector instance.
@@ -63,16 +69,57 @@ func New(application string, level string, vectorHost string, vectorPort int64, 
 		Options:     opts,
 	}
 
+	logger.TimeoutDuration = 10 * time.Second
+
 	// Establish persistent TCP connection if needed
 	if opts.Writer == nil && vectorHost != "" {
 		conn, err := establishConnection(vectorHost, vectorPort)
 		if err != nil {
-			return nil, err
+			// fallback to the Stdout logger
+			_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("fallback to the Stdout logger: %v", err)))
+			logger.Options.AlsoPrintMessages = true
+			logger.VectorHost = ""
+			return logger, nil
 		}
 		logger.conn = conn
+		logger.lastActivityTime = time.Now()
+	}
+
+	logger.stopChan = make(chan struct{})
+
+	if opts.Writer == nil && logger.VectorHost != "" && logger.conn != nil {
+		logger.wg.Add(1)
+		go logger.manageConnection()
 	}
 
 	return logger, nil
+}
+
+// manageConnection is a background goroutine that proactively closes idle connections.
+func (l *VectorLogger) manageConnection() {
+	defer l.wg.Done()
+	// Set ticker to a fraction of the timeoutDuration, e.g., timeoutDuration / 2, but not less than a minimum (e.g., 5s)
+	// For this implementation, we'll use a fixed 10 seconds as specified.
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	fmt.Printf("Starting connection manager for %s:%d\n", l.VectorHost, l.VectorPort) // For debugging
+
+	for {
+		select {
+		case <-ticker.C:
+			l.mu.Lock()
+			if l.conn != nil && time.Since(l.lastActivityTime) > l.TimeoutDuration {
+				fmt.Printf("Proactively closing idle Vector connection to %s:%d\n", l.VectorHost, l.VectorPort)
+				l.conn.Close()
+				l.conn = nil
+			}
+			l.mu.Unlock()
+		case <-l.stopChan:
+			fmt.Printf("Stopping connection manager for %s:%d\n", l.VectorHost, l.VectorPort) // For debugging
+			return
+		}
+	}
 }
 
 // Message represents a log message.
@@ -169,6 +216,11 @@ func (l *VectorLogger) FatalError(message error) {
 	os.Exit(1)
 }
 
+func formatErrorMessage(msg string) string {
+	timestamp := time.Now().UTC().Format("2006-01-02T15:04:05.00Z")
+	return fmt.Sprintf("%23s | %5s | %s\n", timestamp, ERROR, msg)
+}
+
 // send sends the log message to stdout and to a remote Vector instance.
 func (l *VectorLogger) send(msg *Message) {
 	// Write logs to the stdout with different (human-readable) format
@@ -176,54 +228,127 @@ func (l *VectorLogger) send(msg *Message) {
 		_, _ = fmt.Fprintf(os.Stdout, "%23s | %5s | %s\n", msg.Timestamp, msg.Level, msg.Message)
 	}
 
-	dest := l.Options.Writer
-	if dest == nil {
-		// Setup network connection if the host is set
-		if l.VectorHost == "" {
-			return
-		}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-		// Use persistent connection
+	var dest io.Writer = l.Options.Writer
+
+	if dest == nil && l.VectorHost != "" {
+		// Network connection logic
 		if l.conn == nil {
 			// Try to establish connection if it doesn't exist
 			conn, err := establishConnection(l.VectorHost, l.VectorPort)
 			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "[ERROR] %v\n", err)
+				_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("initial connection failed: %v", err)))
+				// enable fallback to the stdout
+				l.Options.AlsoPrintMessages = true
 				return
 			}
 			l.conn = conn
+			l.lastActivityTime = time.Now()
+		} else if time.Since(l.lastActivityTime) > l.TimeoutDuration {
+			// Connection timed out, try to re-establish
+			if l.conn != nil {
+				l.conn.Close()
+				l.conn = nil // Explicitly set to nil after closing
+			}
+			conn, err := establishConnection(l.VectorHost, l.VectorPort)
+			if err != nil {
+				_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("timed out connection re-establishment failed: %v", err)))
+				l.conn = nil // Ensure conn is nil if re-establishment fails
+				return
+			}
+			l.conn = conn
+			l.lastActivityTime = time.Now()
 		}
 
+		if l.conn == nil { // If connection is still nil after attempts, return
+			_, _ = fmt.Fprint(os.Stderr, formatErrorMessage("no valid network connection available"))
+			return
+		}
 		dest = l.conn
+	} else if dest == nil && l.VectorHost == "" {
+		// No writer and no vector host configured, nothing to do.
+		return
 	}
 
 	// Convert the JSON object to bytes
 	buf := new(bytes.Buffer)
 	if errMarshal := json.NewEncoder(buf).Encode(msg); errMarshal != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot marshal log msg: %v\n", errMarshal)
+		_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("cannot marshal log msg: %v", errMarshal)))
 		return
 	}
 
-	// Send the log bytes to the TCP socket
+	// Send the log bytes
 	if _, errSend := buf.WriteTo(dest); errSend != nil {
-		// let's try to reconnect and send again
-		conn, err := establishConnection(l.VectorHost, l.VectorPort)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot establish connection: %v\n", err)
-			return
-		}
+		// Send failed
+		if l.Options.Writer == nil && l.VectorHost != "" { // Check if it was a network send
+			// Network send failed, attempt to reconnect and send again
+			if l.conn != nil {
+				l.conn.Close()
+				l.conn = nil
+			}
 
-		l.conn = conn
-		if _, errSendAgain := buf.WriteTo(l.conn); errSendAgain != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "[ERROR] cannot send data to the TCP endpoint: %v\n", errSendAgain)
+			conn, err := establishConnection(l.VectorHost, l.VectorPort)
+			if err != nil {
+				_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("re-connection after send failure failed: %v", err)))
+				l.conn = nil // Ensure conn is nil
+				return
+			}
+			l.conn = conn
+			l.lastActivityTime = time.Now()
+			dest = l.conn // Update dest to the new connection
+
+			// Retry sending
+			// Re-encode to a new buffer, as the previous buffer might have been partially written or its state is uncertain.
+			retryBuf := new(bytes.Buffer)
+			if errMarshalRetry := json.NewEncoder(retryBuf).Encode(msg); errMarshalRetry != nil {
+				_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("cannot marshal log msg for retry: %v", errMarshalRetry)))
+				return
+			}
+			if _, errSendAgain := retryBuf.WriteTo(dest); errSendAgain != nil {
+				_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("cannot send data to the TCP endpoint after re-connection: %v", errSendAgain)))
+				// Even if this send fails, we keep the new connection for future attempts.
+				// But we should probably close it and set to nil if this fails too, to force re-establishment next time.
+				if l.conn != nil {
+					l.conn.Close()
+					l.conn = nil
+				}
+				return
+			}
+			// If second send is successful, update lastActivityTime
+			l.lastActivityTime = time.Now()
+		} else {
+			// Send failed on a non-network writer (e.g. custom io.Writer)
+			_, _ = fmt.Fprint(os.Stderr, formatErrorMessage(fmt.Sprintf("failed to write to custom writer: %v", errSend)))
 		}
+		return // Return after handling send error
+	}
+
+	// If send was successful and it was a network send, update lastActivityTime
+	if dest == l.conn && l.conn != nil { // Check l.conn != nil for safety, though dest == l.conn implies it
+		l.lastActivityTime = time.Now()
 	}
 }
 
 func (l *VectorLogger) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Signal the connection management goroutine to stop
+	if l.stopChan != nil {
+		close(l.stopChan)
+		l.stopChan = nil
+	}
+
+	// Wait for the connection management goroutine to finish
+	l.wg.Wait()
+
 	l.Options.Writer = nil
 	if l.conn != nil {
-		return l.conn.Close()
+		err := l.conn.Close()
+		l.conn = nil // Set conn to nil after closing
+		return err
 	}
 	return nil
 }
